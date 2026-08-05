@@ -124,23 +124,11 @@ export function computeContentHash(jobs, extractJobID, extractJobTitle, extractL
     return sha256(sortDeterministic(fingerprints).join('\n'));
 }
 
-/**
- * Upserts one company's state.
- *
- * @param {import('mongodb').Db} db
- */
-export async function saveScrapeState(db, ats, slug, idHash, contentHash, jobCount) {
-    const now = new Date();
-
-    await db.collection(STATE_COLLECTION).findOneAndUpdate(
-        { slug, ats },
-        {
-            $set: { idHash, contentHash, jobCount, lastScrapedAt: now },
-            $setOnInsert: { slug, ats, createdAt: now },
-        },
-        { upsert: true, returnDocument: 'after' },
-    );
-}
+// REMOVED: saveScrapeState(db, ats, slug, ...)
+//
+// A findOneAndUpdate per company — 2,800 round-trips on a full run to write
+// 2,800 tiny documents. saveScrapeStatesBulk() below does the same work for a
+// whole platform in one bulkWrite, which is how it is called from index.js.
 
 /**
  * Bulk equivalent of saveScrapeState. One round-trip for a whole platform

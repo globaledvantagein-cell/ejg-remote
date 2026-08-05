@@ -4,8 +4,6 @@
 import he from 'he';
 import { JSDOM } from 'jsdom';
 
-export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 export function StripHtml(html) {
     if (!html) return "";
     // Decode first (handles double-encoded &lt;p&gt; → <p>), then strip tags

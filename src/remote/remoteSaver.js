@@ -171,25 +171,12 @@ export function buildDedupKey(company, title, country) {
     return `${normalizeCompany(company)}|${normalizeTitle(title)}|${code}`;
 }
 
-/**
- * True when a remote job with the same company/title/country is already stored.
- *
- * @param {import('mongodb').Db} db
- * @param {string} company
- * @param {string} title
- * @param {string|null} country
- * @returns {Promise<boolean>}
- */
-export async function deduplicateRemoteJob(db, company, title, country) {
-    const dedupKey = buildDedupKey(company, title, country);
-
-    const existing = await db.collection(JOBS_COLLECTION).findOne(
-        { dedupKey, jobScope: 'remote' },
-        { projection: { _id: 1 } },
-    );
-
-    return Boolean(existing);
-}
+// REMOVED: deduplicateRemoteJob(db, company, title, country)
+//
+// It issued one findOne per job — 60,000 round-trips on a full run, and the
+// single biggest cost in the old pipeline. Replaced by dedupCache.js, which
+// loads every active dedupKey into a Set once at startup and answers the same
+// question in O(1) with no I/O. See isDuplicate() there.
 
 // Title/department keyword → { Category, Domain }. Ordered: the first match
 // wins, so the more specific buckets are listed before the broad ones.
@@ -224,49 +211,18 @@ export function categorizeFromTitle(title, department) {
     return { category: 'other-technical', domain: 'Technical' };
 }
 
-/**
- * Upserts a fully-mapped remote job.
- *
- * New job      → inserted active, with jobScope/approvalMethod/timestamps.
- * Existing job → only `scrapedAt` is refreshed, so an active listing stays fresh
- *                without clobbering anything downstream (e.g. an AI enrichment
- *                pass) that may have written to the document since.
- *
- * @param {import('mongodb').Db} db
- * @param {object} jobDoc - full job document, must carry JobID
- * @returns {Promise<{saved:boolean, isNew:boolean}>}
- */
-export async function saveRemoteJob(db, jobDoc) {
-    const jobs = db.collection(JOBS_COLLECTION);
-    const now = new Date();
-
-    // Single choke point for country normalisation: every document written to
-    // Mongo carries an ISO alpha-2 code, whatever the source ATS returned.
-    const doc = { ...jobDoc, Country: normalizeCountryCode(jobDoc.Country) };
-
-    const existing = await jobs.findOne(
-        { JobID: doc.JobID },
-        { projection: { _id: 1, Status: 1 } },
-    );
-
-    if (existing) {
-        if (existing.Status === 'active') {
-            await jobs.updateOne({ _id: existing._id }, { $set: { scrapedAt: now } });
-            return { saved: true, isNew: false };
-        }
-        // Non-active (expired/rejected) documents are left untouched — resurrecting
-        // them is the main pipeline's decision, not this scraper's.
-        return { saved: false, isNew: false };
-    }
-
-    await jobs.insertOne({
-        ...doc,
-        Status: 'active',
-        jobScope: 'remote',
-        approvalMethod: 'remote_auto',
-        createdAt: now,
-        scrapedAt: now,
-    });
-
-    return { saved: true, isNew: true };
-}
+// REMOVED: saveRemoteJob(db, jobDoc)
+//
+// The old per-job write: one findOne to check existence, then one insertOne or
+// updateOne. Three round-trips per surviving job, serialised, with no way to
+// amortise them.
+//
+// Replaced by bulkSaver.js, which queues the same two outcomes as bulkWrite
+// operations and flushes 500 at a time with `ordered: false`:
+//
+//   already stored → addUpdate()  — refreshes scrapedAt
+//   new            → addInsert()  — stamps Status/jobScope/approvalMethod
+//
+// The existence check that used to cost a query is now a Set lookup in
+// dedupCache.js. Country normalisation moved to buildJobDocument() in index.js
+// so it still happens exactly once per document.
