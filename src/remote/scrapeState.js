@@ -150,7 +150,10 @@ export async function saveScrapeState(db, ats, slug, idHash, contentHash, jobCou
  * @param {Array<{ats:string, slug:string, idHash:string, contentHash:string, jobCount:number}>} states
  */
 export async function saveScrapeStatesBulk(db, states) {
-    if (!states || states.length === 0) return 0;
+    if (!states || states.length === 0) {
+        console.log('[ScrapeState] No states to save (every company failed or was skipped)');
+        return 0;
+    }
 
     const now = new Date();
     const operations = states.map(({ ats, slug, idHash, contentHash, jobCount }) => ({
@@ -165,7 +168,12 @@ export async function saveScrapeStatesBulk(db, states) {
     }));
 
     const result = await db.collection(STATE_COLLECTION).bulkWrite(operations, { ordered: false });
-    return (result.upsertedCount || 0) + (result.modifiedCount || 0);
+
+    const upserted = result.upsertedCount || 0;
+    const modified = result.modifiedCount || 0;
+    console.log(`[ScrapeState] Saving ${states.length} states for ${states[0].ats} (${upserted} new, ${modified} updated)`);
+
+    return upserted + modified;
 }
 
 /**

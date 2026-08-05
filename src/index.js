@@ -611,6 +611,11 @@ async function main() {
     console.log(`[Remote Scraper] Expiry: ${expiredCount} jobs expired, ${resetCount} miss counters reset`);
     console.log(`[Remote Scraper] Cleanup complete in ${formatDuration(Date.now() - cleanupBegan)}`);
 
+    // Proof the bulk path actually carried the writes. If flushedOperations is 0
+    // while jobs were saved, something bypassed the buffer.
+    const b = ctx.buffer;
+    console.log(`[BulkSaver] Total: ${b.flushedOperations} operations flushed, ${b.savedCount} inserts, ${b.updatedCount} updates, ${b.errorCount} errors`);
+
     // ── Summary ────────────────────────────────────────────────────────────────
     console.log('\n─────────────────────────────────────────────');
     console.log(`[Remote Scraper] Complete in ${formatDuration(Date.now() - runStartedAt)}`);
