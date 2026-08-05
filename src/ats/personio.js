@@ -175,66 +175,71 @@ function assembleDescription(jobDescriptionsBlock, asHtml) {
  * @param {Array<{subdomain:string, tld:string}>} slugList
  * @returns {Promise<object[]>}
  */
-export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
-    const allJobs = [];
-    let successCount = 0;
-    let failCount = 0;
+/**
+ * Fetches one company's board. Returns its jobs, or [] on any failure.
+ *
+ * Exported so the incremental pipeline can hash and compare a single company
+ * before deciding whether to process it. fetchAllJobs() is a thin fan-out over
+ * this.
+ *
+ * @param {string} { subdomain, tld }
+ * @returns {Promise<object[]>}
+ */
+export async function fetchCompanyJobs({ subdomain, tld }) {
+    console.log(`[Personio] Fetching: ${subdomain}...`);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(`https://${subdomain}.jobs.personio.${tld}/xml?language=en`, {
+            headers: { 'Accept': 'application/xml,text/xml' },
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            return [];
+        }
+
+        // A retired careers subdomain can answer 200 with an HTML holding
+        // page, so the XML parse is guarded rather than the status trusted.
+        let parsed;
+        try {
+            parsed = xmlParser.parse(await response.text());
+        } catch {
+            console.warn(`[Personio] ${subdomain}: response was not valid XML`);
+            return [];
+        }
+
+        const positions = parsed?.['workzag-jobs']?.position || [];
+        console.log(`[Personio] ${subdomain}: ${positions.length} jobs fetched`);
+
+        if (positions.length === 0) return [];
+
+        // Kept per worker: paces this slot's next request.
+        await sleep(REQUEST_DELAY_MS);
+
+        return positions.map(job => ({ ...job, _subdomain: subdomain, _tld: tld }));
+
+    } catch (error) {
+        console.error(`[Personio] ${subdomain}: ${error.message}`);
+        return [];
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+/**
+ * Fetches every job from every board. No location filtering.
+ * @param {string[]} slugList
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
     console.log(`[Personio] Fetching jobs from ${slugList.length} companies (${FETCH_CONCURRENCY} at a time)...`);
 
-    /** Fetches one careers feed. Returns its positions, or [] on any failure. */
-    async function fetchFeed({ subdomain, tld }) {
-        console.log(`[Personio] Fetching: ${subdomain}...`);
+    const allJobs = collectFulfilled(await runConcurrent(slugList, fetchCompanyJobs, FETCH_CONCURRENCY));
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-        try {
-            const response = await fetch(`https://${subdomain}.jobs.personio.${tld}/xml?language=en`, {
-                headers: { 'Accept': 'application/xml,text/xml' },
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                failCount++;
-                return [];
-            }
-
-            // A retired careers subdomain can answer 200 with an HTML holding
-            // page, so the XML parse is guarded rather than the status trusted.
-            let parsed;
-            try {
-                parsed = xmlParser.parse(await response.text());
-            } catch {
-                failCount++;
-                console.warn(`[Personio] ${subdomain}: response was not valid XML`);
-                return [];
-            }
-
-            const positions = parsed?.['workzag-jobs']?.position || [];
-            console.log(`[Personio] ${subdomain}: ${positions.length} jobs fetched`);
-
-            if (positions.length === 0) return [];
-
-            successCount++;
-
-            // Kept per worker: paces this slot's next request.
-            await sleep(REQUEST_DELAY_MS);
-
-            return positions.map(job => ({ ...job, _subdomain: subdomain, _tld: tld }));
-
-        } catch (error) {
-            failCount++;
-            console.error(`[Personio] ${subdomain}: ${error.message}`);
-            return [];
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    allJobs.push(...collectFulfilled(await runConcurrent(slugList, fetchFeed, FETCH_CONCURRENCY)));
-
-    console.log(`[Personio] ${allJobs.length} jobs from ${successCount} companies (${failCount} failed/empty)`);
+    console.log(`[Personio] ${allJobs.length} jobs fetched in total`);
     return allJobs;
 }
 

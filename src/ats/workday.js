@@ -148,100 +148,104 @@ async function fetchJobsPage(listUrl, offset) {
  * @param {Array<{company:string,instance:string,site:string,name:string}>} slugList
  * @returns {Promise<object[]>}
  */
-export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
-    const allJobs = [];
-    let successCount = 0;
-    let failCount = 0;
+/**
+ * Fetches one Workday board, paginating it to the cap. Pages within a board stay
+ * sequential — the offset walk is inherently serial.
+ *
+ * Exported so the incremental pipeline can hash one board at a time.
+ *
+ * @param {{company:string, instance:string, site:string, name:string}} board
+ * @returns {Promise<object[]>}
+ */
+export async function fetchCompanyJobs(board) {
+    const { company, instance, site, name } = board;
+    const baseUrl = buildBaseUrl(company, instance);
+    const listUrl = `${baseUrl}/wday/cxs/${company}/${site}/jobs`;
 
-    console.log(`[Workday] Fetching jobs from ${slugList.length} companies (${FETCH_CONCURRENCY} at a time)...`);
+    console.log(`[Workday] Fetching: ${company}...`);
 
-    // Guard against duplicate board entries producing duplicate jobs.
-    const seenBoards = new Set();
-    const boards = slugList.filter(board => {
-        const key = `${board.company}_${board.site}`;
-        if (seenBoards.has(key)) return false;
-        seenBoards.add(key);
-        return true;
-    });
-
-    /**
-     * Fetches one board, paginating it to the cap. Pages within a board stay
-     * sequential — the offset walk is inherently serial, and only the boards
-     * themselves are parallelised.
-     */
-    async function fetchBoard(board) {
-        const { company, instance, site, name } = board;
-        const baseUrl = buildBaseUrl(company, instance);
-        const listUrl = `${baseUrl}/wday/cxs/${company}/${site}/jobs`;
-
-        console.log(`[Workday] Fetching: ${company}...`);
-
-        try {
-            const firstData = await fetchJobsPage(listUrl, 0);
-            if (!firstData) {
-                failCount++;
-                return [];
-            }
-
-            const total = firstData.total || 0;
-            if (!total) return [];
-
-            const decorate = (postings) => (postings || []).map(posting => ({
-                ...posting,
-                _company: company,
-                _instance: instance,
-                _site: site,
-                _companyName: name,
-            }));
-
-            const companyJobs = decorate(firstData.jobPostings);
-            let offset = PAGE_SIZE;
-            let pageCount = 1;
-
-            while (offset < total
-                && pageCount < MAX_PAGES_PER_COMPANY
-                && companyJobs.length < MAX_JOBS_PER_COMPANY) {
-                await sleep(PAGE_DELAY_MS);
-
-                const pageData = await fetchJobsPage(listUrl, offset);
-                if (!pageData) break;
-
-                companyJobs.push(...decorate(pageData.jobPostings));
-                offset += PAGE_SIZE;
-                pageCount++;
-
-                console.log(`[Workday] ${company}: page ${pageCount}, ${companyJobs.length} jobs so far...`);
-            }
-
-            // A tenant whose last page overshoots the cap is trimmed, so the
-            // logged number and the number kept always agree.
-            if (companyJobs.length > MAX_JOBS_PER_COMPANY) {
-                companyJobs.length = MAX_JOBS_PER_COMPANY;
-            }
-
-            if (companyJobs.length < total) {
-                console.log(`[Workday] ${company}: capped at ${companyJobs.length} jobs (total available: ${total})`);
-            }
-
-            console.log(`[Workday] ${company}: ${companyJobs.length} jobs fetched`);
-
-            successCount++;
-
-            // Kept per worker: paces this slot's next board.
-            await sleep(COMPANY_DELAY_MS);
-
-            return companyJobs;
-
-        } catch (error) {
-            failCount++;
-            console.error(`[Workday] ${company} (${name}): ${error?.message || error}`);
+    try {
+        const firstData = await fetchJobsPage(listUrl, 0);
+        if (!firstData) {
             return [];
         }
+
+        const total = firstData.total || 0;
+        if (!total) return [];
+
+        const decorate = (postings) => (postings || []).map(posting => ({
+            ...posting,
+            _company: company,
+            _instance: instance,
+            _site: site,
+            _companyName: name,
+        }));
+
+        const companyJobs = decorate(firstData.jobPostings);
+        let offset = PAGE_SIZE;
+        let pageCount = 1;
+
+        while (offset < total
+            && pageCount < MAX_PAGES_PER_COMPANY
+            && companyJobs.length < MAX_JOBS_PER_COMPANY) {
+            await sleep(PAGE_DELAY_MS);
+
+            const pageData = await fetchJobsPage(listUrl, offset);
+            if (!pageData) break;
+
+            companyJobs.push(...decorate(pageData.jobPostings));
+            offset += PAGE_SIZE;
+            pageCount++;
+
+            console.log(`[Workday] ${company}: page ${pageCount}, ${companyJobs.length} jobs so far...`);
+        }
+
+        // A tenant whose last page overshoots the cap is trimmed, so the
+        // logged number and the number kept always agree.
+        if (companyJobs.length > MAX_JOBS_PER_COMPANY) {
+            companyJobs.length = MAX_JOBS_PER_COMPANY;
+        }
+
+        if (companyJobs.length < total) {
+            console.log(`[Workday] ${company}: capped at ${companyJobs.length} jobs (total available: ${total})`);
+        }
+
+        console.log(`[Workday] ${company}: ${companyJobs.length} jobs fetched`);
+
+        // Kept per worker: paces this slot's next board.
+        await sleep(COMPANY_DELAY_MS);
+
+        return companyJobs;
+
+    } catch (error) {
+        console.error(`[Workday] ${company} (${name}): ${error?.message || error}`);
+        return [];
     }
+}
 
-    allJobs.push(...collectFulfilled(await runConcurrent(boards, fetchBoard, FETCH_CONCURRENCY)));
+/** Drops duplicate board entries, which would otherwise yield duplicate jobs. */
+export function dedupeBoards(slugList) {
+    const seen = new Set();
+    return slugList.filter(board => {
+        const key = `${board.company}_${board.site}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
 
-    console.log(`[Workday] ${allJobs.length} jobs from ${successCount} boards (${failCount} failed/empty)`);
+/**
+ * Fetches every job from every board. No location filtering.
+ * @param {Array<object>} slugList
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
+    const boards = dedupeBoards(slugList);
+    console.log(`[Workday] Fetching jobs from ${boards.length} companies (${FETCH_CONCURRENCY} at a time)...`);
+
+    const allJobs = collectFulfilled(await runConcurrent(boards, fetchCompanyJobs, FETCH_CONCURRENCY));
+
+    console.log(`[Workday] ${allJobs.length} jobs fetched in total`);
     return allJobs;
 }
 

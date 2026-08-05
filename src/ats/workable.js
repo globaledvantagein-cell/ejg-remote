@@ -50,77 +50,87 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
  * @param {string[]} slugList - country names to search
  * @returns {Promise<object[]>}
  */
-export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
-    const allJobs = [];
+/**
+ * Paginates one country search. Pages stay sequential — each needs the previous
+ * page's nextPageToken.
+ *
+ * Workable has no per-company board API, so a "slug" here is a country name.
+ * Exported under the same name as the other platforms so the pipeline can treat
+ * all nine uniformly.
+ *
+ * @param {string} location
+ * @returns {Promise<object[]>}
+ */
+export async function fetchCompanyJobs(location) {
+    console.log(`[Workable] Fetching: ${location}...`);
 
-    console.log(`[Workable] Fetching jobs across ${slugList.length} countries (${FETCH_CONCURRENCY} at a time)...`);
+    const countryJobs = [];
+    let pageToken = null;
+    let pageCount = 0;
+    let countryTotal = 0;
 
-    /**
-     * Paginates one country search. Pages stay sequential — each needs the
-     * previous page's nextPageToken — and only the countries run in parallel.
-     */
-    async function fetchCountry(location) {
-        console.log(`[Workable] Fetching: ${location}...`);
+    try {
+        do {
+            const params = new URLSearchParams({ location, limit: String(PAGE_SIZE) });
+            if (pageToken) params.set('pageToken', pageToken);
 
-        const countryJobs = [];
-        let pageToken = null;
-        let pageCount = 0;
-        let countryTotal = 0;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-        try {
-            do {
-                const params = new URLSearchParams({ location, limit: String(PAGE_SIZE) });
-                if (pageToken) params.set('pageToken', pageToken);
+            let data;
+            try {
+                const response = await fetch(`${API_BASE}?${params.toString()}`, {
+                    headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' },
+                    signal: controller.signal,
+                });
 
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-                let data;
-                try {
-                    const response = await fetch(`${API_BASE}?${params.toString()}`, {
-                        headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' },
-                        signal: controller.signal,
-                    });
-
-                    if (!response.ok) {
-                        console.log(`[Workable] ${location}: HTTP ${response.status} — stopping pagination`);
-                        break;
-                    }
-                    data = await response.json();
-                } finally {
-                    clearTimeout(timeoutId);
+                if (!response.ok) {
+                    console.log(`[Workable] ${location}: HTTP ${response.status} — stopping pagination`);
+                    break;
                 }
-
-                const jobs = data.jobs || [];
-                if (jobs.length === 0) break;
-
-                countryJobs.push(...jobs);
-                countryTotal += jobs.length;
-                pageCount++;
-                pageToken = data.nextPageToken || null;
-
-                if (pageToken) await sleep(PAGE_DELAY_MS);
-
-            } while (pageToken && pageCount < MAX_PAGES_PER_COUNTRY);
-
-            if (pageToken && pageCount >= MAX_PAGES_PER_COUNTRY) {
-                console.log(`[Workable] ${location}: page cap reached at ${countryTotal} jobs, remainder skipped`);
-            } else {
-                console.log(`[Workable] ${location}: ${countryTotal} jobs fetched`);
+                data = await response.json();
+            } finally {
+                clearTimeout(timeoutId);
             }
 
-            return countryJobs;
+            const jobs = data.jobs || [];
+            if (jobs.length === 0) break;
 
-        } catch (error) {
-            console.error(`[Workable] ${location}: ${error.message}`);
-            // Whatever paginated successfully before the failure is still good.
-            return countryJobs;
+            countryJobs.push(...jobs);
+            countryTotal += jobs.length;
+            pageCount++;
+            pageToken = data.nextPageToken || null;
+
+            if (pageToken) await sleep(PAGE_DELAY_MS);
+
+        } while (pageToken && pageCount < MAX_PAGES_PER_COUNTRY);
+
+        if (pageToken && pageCount >= MAX_PAGES_PER_COUNTRY) {
+            console.log(`[Workable] ${location}: page cap reached at ${countryTotal} jobs, remainder skipped`);
+        } else {
+            console.log(`[Workable] ${location}: ${countryTotal} jobs fetched`);
         }
+
+        return countryJobs;
+
+    } catch (error) {
+        console.error(`[Workable] ${location}: ${error.message}`);
+        // Whatever paginated successfully before the failure is still good.
+        return countryJobs;
     }
+}
 
-    allJobs.push(...collectFulfilled(await runConcurrent(slugList, fetchCountry, FETCH_CONCURRENCY)));
+/**
+ * Fetches every job across every whitelisted country search.
+ * @param {string[]} slugList - country names
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
+    console.log(`[Workable] Fetching jobs across ${slugList.length} countries (${FETCH_CONCURRENCY} at a time)...`);
 
-    console.log(`[Workable] ${allJobs.length} jobs total`);
+    const allJobs = collectFulfilled(await runConcurrent(slugList, fetchCompanyJobs, FETCH_CONCURRENCY));
+
+    console.log(`[Workable] ${allJobs.length} jobs fetched in total`);
     return allJobs;
 }
 

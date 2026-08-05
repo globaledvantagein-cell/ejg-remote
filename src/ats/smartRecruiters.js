@@ -147,42 +147,48 @@ async function fetchListedJobs(companyId, country) {
  * @param {string[]} slugList
  * @returns {Promise<object[]>}
  */
-export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
-    const allJobs = [];
-    let failCount = 0;
+/**
+ * Queries one company across every whitelisted country. The country loop stays
+ * sequential so a single company never opens QUERY_COUNTRIES connections at
+ * once — parallelism is across companies only.
+ *
+ * Exported so the incremental pipeline can hash one company at a time.
+ *
+ * @param {string} companyId
+ * @returns {Promise<object[]>}
+ */
+export async function fetchCompanyJobs(companyId) {
+    console.log(`[SmartRecruiters] Fetching: ${companyId}...`);
 
-    console.log(`[SmartRecruiters] Fetching jobs from ${slugList.length} companies (${FETCH_CONCURRENCY} at a time)...`);
+    const companyJobs = [];
 
-    /**
-     * Queries one company across every whitelisted country. The country loop
-     * stays sequential so a single company never opens QUERY_COUNTRIES
-     * connections at once — parallelism is across companies only.
-     */
-    async function fetchCompany(companyId) {
-        console.log(`[SmartRecruiters] Fetching: ${companyId}...`);
-
-        const companyJobs = [];
-
-        for (const country of QUERY_COUNTRIES) {
-            try {
-                const listed = await fetchListedJobs(companyId, country);
-                if (listed.length > 0) {
-                    companyJobs.push(...listed.map(job => ({ ...job, _companyId: companyId })));
-                }
-                await sleep(REQUEST_DELAY_MS);
-            } catch (error) {
-                failCount++;
-                console.error(`[SmartRecruiters] ${companyId}/${country}: ${error.message}`);
+    for (const country of QUERY_COUNTRIES) {
+        try {
+            const listed = await fetchListedJobs(companyId, country);
+            if (listed.length > 0) {
+                companyJobs.push(...listed.map(job => ({ ...job, _companyId: companyId })));
             }
+            await sleep(REQUEST_DELAY_MS);
+        } catch (error) {
+            console.error(`[SmartRecruiters] ${companyId}/${country}: ${error.message}`);
         }
-
-        console.log(`[SmartRecruiters] ${companyId}: ${companyJobs.length} jobs fetched`);
-        return companyJobs;
     }
 
-    allJobs.push(...collectFulfilled(await runConcurrent(slugList, fetchCompany, FETCH_CONCURRENCY)));
+    console.log(`[SmartRecruiters] ${companyId}: ${companyJobs.length} jobs fetched`);
+    return companyJobs;
+}
 
-    console.log(`[SmartRecruiters] ${allJobs.length} jobs listed (${failCount} query failures)`);
+/**
+ * Fetches listed postings for every company. Descriptions arrive via enrichJob().
+ * @param {string[]} slugList
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
+    console.log(`[SmartRecruiters] Fetching jobs from ${slugList.length} companies (${FETCH_CONCURRENCY} at a time)...`);
+
+    const allJobs = collectFulfilled(await runConcurrent(slugList, fetchCompanyJobs, FETCH_CONCURRENCY));
+
+    console.log(`[SmartRecruiters] ${allJobs.length} jobs listed in total`);
     return allJobs;
 }
 

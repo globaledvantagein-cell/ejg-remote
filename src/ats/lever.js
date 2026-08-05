@@ -102,66 +102,71 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
  * @param {string[]} slugList
  * @returns {Promise<object[]>}
  */
-export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
-    const allJobs = [];
-    let successCount = 0;
-    let failCount = 0;
+/**
+ * Fetches one company's board. Returns its jobs, or [] on any failure.
+ *
+ * Exported so the incremental pipeline can hash and compare a single company
+ * before deciding whether to process it. fetchAllJobs() is a thin fan-out over
+ * this.
+ *
+ * @param {string} siteName
+ * @returns {Promise<object[]>}
+ */
+export async function fetchCompanyJobs(siteName) {
+    console.log(`[Lever] Fetching: ${siteName}...`);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(`${BASE_URL}/${siteName}?mode=json`, {
+            headers: { 'User-Agent': USER_AGENT },
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            return [];
+        }
+
+        // A dead or renamed board can answer 200 with an HTML error page,
+        // so the parse is guarded rather than the status trusted alone.
+        let data;
+        try {
+            data = await response.json();
+        } catch {
+            console.warn(`[Lever] ${siteName}: response was not valid JSON`);
+            return [];
+        }
+
+        const jobs = Array.isArray(data) ? data : [];
+        console.log(`[Lever] ${siteName}: ${jobs.length} jobs fetched`);
+
+        if (jobs.length === 0) return [];
+
+        // Kept per worker: paces this slot's next request.
+        await sleep(REQUEST_DELAY_MS);
+
+        return jobs.map(job => ({ ...job, _siteName: siteName }));
+
+    } catch (error) {
+        console.error(`[Lever] ${siteName}: ${error.message}`);
+        return [];
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+/**
+ * Fetches every job from every board. No location filtering.
+ * @param {string[]} slugList
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
     console.log(`[Lever] Fetching jobs from ${slugList.length} companies (${FETCH_CONCURRENCY} at a time)...`);
 
-    /** Fetches one board. Returns its jobs, or [] on any failure. */
-    async function fetchBoard(siteName) {
-        console.log(`[Lever] Fetching: ${siteName}...`);
+    const allJobs = collectFulfilled(await runConcurrent(slugList, fetchCompanyJobs, FETCH_CONCURRENCY));
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-        try {
-            const response = await fetch(`${BASE_URL}/${siteName}?mode=json`, {
-                headers: { 'User-Agent': USER_AGENT },
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                failCount++;
-                return [];
-            }
-
-            // A dead or renamed board can answer 200 with an HTML error page,
-            // so the parse is guarded rather than the status trusted alone.
-            let data;
-            try {
-                data = await response.json();
-            } catch {
-                failCount++;
-                console.warn(`[Lever] ${siteName}: response was not valid JSON`);
-                return [];
-            }
-
-            const jobs = Array.isArray(data) ? data : [];
-            console.log(`[Lever] ${siteName}: ${jobs.length} jobs fetched`);
-
-            if (jobs.length === 0) return [];
-
-            successCount++;
-
-            // Kept per worker: paces this slot's next request.
-            await sleep(REQUEST_DELAY_MS);
-
-            return jobs.map(job => ({ ...job, _siteName: siteName }));
-
-        } catch (error) {
-            failCount++;
-            console.error(`[Lever] ${siteName}: ${error.message}`);
-            return [];
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    allJobs.push(...collectFulfilled(await runConcurrent(slugList, fetchBoard, FETCH_CONCURRENCY)));
-
-    console.log(`[Lever] ${allJobs.length} jobs from ${successCount} companies (${failCount} failed/empty)`);
+    console.log(`[Lever] ${allJobs.length} jobs fetched in total`);
     return allJobs;
 }
 

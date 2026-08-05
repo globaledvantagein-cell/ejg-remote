@@ -76,58 +76,64 @@ function mapExperienceLevel(code) {
  * @param {string[]} slugList
  * @returns {Promise<object[]>}
  */
-export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
-    const allJobs = [];
-    let successCount = 0;
-    let failCount = 0;
+/**
+ * Fetches one company's board. Returns its jobs, or [] on any failure.
+ *
+ * Exported so the incremental pipeline can hash and compare a single company
+ * before deciding whether to process it. fetchAllJobs() is a thin fan-out over
+ * this.
+ *
+ * @param {string} subdomain
+ * @returns {Promise<object[]>}
+ */
+export async function fetchCompanyJobs(subdomain) {
+    console.log(`[Recruitee] Fetching: ${subdomain}...`);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(`https://${subdomain}.recruitee.com/api/offers/`, {
+            headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            return [];
+        }
+
+        const data = await response.json();
+        const offers = (data.offers || []).filter(offer => !offer.status || offer.status === 'published');
+        console.log(`[Recruitee] ${subdomain}: ${offers.length} jobs fetched`);
+
+        if (offers.length === 0) return [];
+
+        // Kept per worker: paces this slot's next request.
+        await sleep(REQUEST_DELAY_MS);
+
+        return offers.map(offer => ({ ...offer, _subdomain: subdomain }));
+
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            console.error(`[Recruitee] ${subdomain}: ${error.message}`);
+        }
+        return [];
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+/**
+ * Fetches every job from every board. No location filtering.
+ * @param {string[]} slugList
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAllJobs(slugList = COMPANY_SLUGS) {
     console.log(`[Recruitee] Fetching jobs from ${slugList.length} companies (${FETCH_CONCURRENCY} at a time)...`);
 
-    /** Fetches one board. Returns its published offers, or [] on any failure. */
-    async function fetchBoard(subdomain) {
-        console.log(`[Recruitee] Fetching: ${subdomain}...`);
+    const allJobs = collectFulfilled(await runConcurrent(slugList, fetchCompanyJobs, FETCH_CONCURRENCY));
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-        try {
-            const response = await fetch(`https://${subdomain}.recruitee.com/api/offers/`, {
-                headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
-                signal: controller.signal,
-            });
-
-            if (!response.ok) {
-                failCount++;
-                return [];
-            }
-
-            const data = await response.json();
-            const offers = (data.offers || []).filter(offer => !offer.status || offer.status === 'published');
-            console.log(`[Recruitee] ${subdomain}: ${offers.length} jobs fetched`);
-
-            if (offers.length === 0) return [];
-
-            successCount++;
-
-            // Kept per worker: paces this slot's next request.
-            await sleep(REQUEST_DELAY_MS);
-
-            return offers.map(offer => ({ ...offer, _subdomain: subdomain }));
-
-        } catch (error) {
-            failCount++;
-            if (error.name !== 'AbortError') {
-                console.error(`[Recruitee] ${subdomain}: ${error.message}`);
-            }
-            return [];
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
-
-    allJobs.push(...collectFulfilled(await runConcurrent(slugList, fetchBoard, FETCH_CONCURRENCY)));
-
-    console.log(`[Recruitee] ${allJobs.length} jobs from ${successCount} companies (${failCount} failed/empty)`);
+    console.log(`[Recruitee] ${allJobs.length} jobs fetched in total`);
     return allJobs;
 }
 
