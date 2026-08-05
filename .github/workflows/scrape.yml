@@ -1,0 +1,19 @@
+name: Remote Job Scraper
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: node src/index.js
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
