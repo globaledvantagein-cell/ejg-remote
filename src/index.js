@@ -89,6 +89,11 @@ const DEFAULT_CONCURRENCY = 5;
 // no requirements, and nothing for the restriction scan to read.
 const MIN_DESCRIPTION_LENGTH = 200;
 
+// Heartbeat cadence for the per-job loop. A platform can carry tens of thousands
+// of jobs, so per-job logging would bury everything else; this is frequent
+// enough to show the run is alive and roughly how far along it is.
+const PROGRESS_INTERVAL = 1000;
+
 // ─── CLI flags ────────────────────────────────────────────────────────────────
 
 /**
@@ -242,22 +247,45 @@ async function fetchAndCompare(ats, entry, stateMap) {
 /**
  * Runs the filter pipeline over one company's jobs and queues the survivors.
  *
+ * Counters are bumped through bump(), which updates both the per-company tally
+ * this returns and the platform-wide progress tally the heartbeat reads. Keeping
+ * them in step at every branch is what lets the heartbeat report honest running
+ * totals rather than a count that only settles between companies.
+ *
  * @returns {Promise<{saved:number, refreshed:number, filtered:number, duped:number}>}
  */
 async function processCompanyJobs(db, ats, result, ctx) {
     const counts = { saved: 0, refreshed: 0, filtered: 0, duped: 0 };
+    const progress = ctx.progress;
+
+    const bump = (field) => {
+        counts[field]++;
+        if (progress) progress[field]++;
+    };
 
     for (const rawJob of result.jobs) {
+        // Counted before filtering, so the heartbeat measures work done rather
+        // than work that survived.
+        if (progress) {
+            progress.seen++;
+            if (progress.seen % PROGRESS_INTERVAL === 0) {
+                console.log(
+                    `[Remote Scraper] ${ats.ATS_NAME}: processing jobs... `
+                    + `${progress.seen}/${progress.total} (${progress.saved} saved, ${progress.filtered} filtered)`,
+                );
+            }
+        }
+
         try {
             // 1. Country whitelist — free, and kills the overwhelming majority.
             if (!isWhitelistedCountry(ats.extractCountry(rawJob))) {
-                counts.filtered++;
+                bump('filtered');
                 continue;
             }
 
             // 2. Remote check — also free. Hybrid and Onsite are rejected.
             if (!isFullyRemote(ats.extractWorkplaceType(rawJob), ats.extractIsRemote(rawJob))) {
-                counts.filtered++;
+                bump('filtered');
                 continue;
             }
 
@@ -267,14 +295,14 @@ async function processCompanyJobs(db, ats, result, ctx) {
 
             // Workday's authoritative workplace type only exists post-enrichment.
             if (!isFullyRemote(ats.extractWorkplaceType(job), ats.extractIsRemote(job))) {
-                counts.filtered++;
+                bump('filtered');
                 continue;
             }
 
             // 4. Restriction scan on the description.
             const description = ats.extractDescription(job) || '';
             if (hasRestriction(description).restricted) {
-                counts.filtered++;
+                bump('filtered');
                 continue;
             }
 
@@ -286,12 +314,12 @@ async function processCompanyJobs(db, ats, result, ctx) {
             //    reader and invisible to the restriction scan above — it would
             //    pass that gate on a technicality rather than on merit.
             if (description.length < MIN_DESCRIPTION_LENGTH) {
-                counts.filtered++;
+                bump('filtered');
                 continue;
             }
 
             if (!company.trim()) {
-                counts.filtered++;
+                bump('filtered');
                 continue;
             }
 
@@ -303,14 +331,14 @@ async function processCompanyJobs(db, ats, result, ctx) {
             if (isExistingJobId(ctx.dedupCache, jobId)) {
                 addUpdate(ctx.buffer, jobId);
                 ctx.seenJobIds.add(jobId);
-                counts.refreshed++;
+                bump('refreshed');
                 await flushIfFull(db, ctx.buffer);
                 continue;
             }
 
             // 7. Cross-ATS duplicate — same role reachable through another board.
             if (isDuplicate(ctx.dedupCache, dedupKey)) {
-                counts.duped++;
+                bump('duped');
                 continue;
             }
 
@@ -320,13 +348,13 @@ async function processCompanyJobs(db, ats, result, ctx) {
 
             addToCache(ctx.dedupCache, dedupKey, jobId);
             ctx.seenJobIds.add(jobId);
-            counts.saved++;
+            bump('saved');
 
             await flushIfFull(db, ctx.buffer);
 
         } catch (error) {
             console.error(`[${ats.ATS_NAME}] ${result.slug}: job failed — ${error.message}`);
-            counts.filtered++;
+            bump('filtered');
         }
     }
 
@@ -346,7 +374,6 @@ async function processAts(db, ats, ctx) {
 
     // Job IDs seen anywhere in this ATS this run — the basis for expiry.
     const seenJobIds = new Set();
-    const atsCtx = { ...ctx, seenJobIds };
 
     // ── Fetch + hash every company concurrently ────────────────────────────────
     const settled = await runConcurrent(
@@ -358,6 +385,16 @@ async function processAts(db, ats, ctx) {
     const results = settled
         .filter(r => r.status === 'fulfilled' && r.value)
         .map(r => r.value);
+
+    // Denominator for the progress heartbeat: only companies that actually need
+    // processing contribute. Counting skipped companies here would report a
+    // total the loop never reaches.
+    const totalToProcess = results
+        .filter(r => r.status === 'changed')
+        .reduce((sum, r) => sum + r.jobs.length, 0);
+
+    const progress = { seen: 0, total: totalToProcess, saved: 0, refreshed: 0, filtered: 0, duped: 0 };
+    const atsCtx = { ...ctx, seenJobIds, progress };
 
     // ── Process the results sequentially ───────────────────────────────────────
     const totals = { saved: 0, refreshed: 0, filtered: 0, duped: 0 };
