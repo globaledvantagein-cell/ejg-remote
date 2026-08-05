@@ -1,0 +1,23 @@
+{
+  "name": "ejg-remote-scraper",
+  "version": "1.0.0",
+  "description": "Standalone remote-job scraper. Fetches every job from 9 ATS platforms, keeps only fully-remote roles from English-speaking countries that are workable from Germany, and writes them to MongoDB.",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "scrape": "node src/index.js",
+    "dev": "node src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "fast-xml-parser": "^5.7.3",
+    "he": "^1.2.0",
+    "jsdom": "^26.1.0",
+    "mongodb": "^6.20.0",
+    "node-fetch": "^3.3.2"
+  }
+}
