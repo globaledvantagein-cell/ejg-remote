@@ -197,6 +197,28 @@ function buildJobDocument(ats, job, sourceSlug) {
     };
 }
 
+/**
+ * True when a Location string describes a role with NO geographic restriction.
+ *
+ * isFullyRemote() reads WorkplaceType, which normalizeWorkplaceType() derives
+ * with a `lower.includes('remote')` test — so "Remote - US" normalises to
+ * "Remote" and sails through. The Location field is where the restriction
+ * actually survives, and it is the only place it can be seen.
+ *
+ *   ""                       → accept (many ATSs omit Location for global roles)
+ *   "Remote" / "  remote  "  → accept
+ *   "Remote - US"            → reject
+ *   "Remote, United Kingdom" → reject
+ *   "New York"               → reject
+ *
+ * Deliberately strict: anything beyond the bare word is a qualifier, and a
+ * qualifier means somebody somewhere cannot take the job.
+ */
+function isGlobalRemoteLocation(rawLocation) {
+    const cleaned = String(rawLocation ?? '').trim().toLowerCase();
+    return cleaned === '' || cleaned === 'remote';
+}
+
 // ─── Phase 2: per-company work ────────────────────────────────────────────────
 
 /**
@@ -252,15 +274,17 @@ async function fetchAndCompare(ats, entry, stateMap) {
  * them in step at every branch is what lets the heartbeat report honest running
  * totals rather than a count that only settles between companies.
  *
- * @returns {Promise<{saved:number, refreshed:number, filtered:number, duped:number}>}
+ * @returns {Promise<{saved:number, refreshed:number, filtered:number, duped:number, geoLocked:number}>}
  */
 async function processCompanyJobs(db, ats, result, ctx) {
-    const counts = { saved: 0, refreshed: 0, filtered: 0, duped: 0 };
+    const counts = { saved: 0, refreshed: 0, filtered: 0, duped: 0, geoLocked: 0 };
     const progress = ctx.progress;
 
     const bump = (field) => {
         counts[field]++;
-        if (progress) progress[field]++;
+        // geoLocked was added later; guard so an older progress object without
+        // the key does not turn into NaN in the heartbeat line.
+        if (progress && typeof progress[field] === 'number') progress[field]++;
     };
 
     for (const rawJob of result.jobs) {
@@ -289,12 +313,44 @@ async function processCompanyJobs(db, ats, result, ctx) {
                 continue;
             }
 
+            // 2b. isFullyRemote passed — now verify the Location carries no
+            //     geographic qualifier. Checked here, before enrichment, so an
+            //     obviously geo-locked posting never costs a network request.
+            const rawLocation = ats.extractLocation(rawJob);
+            if (!isGlobalRemoteLocation(rawLocation)) {
+                console.log(
+                    '[RemoteFilter] Rejected geo-locked: "%s" — %s at %s',
+                    rawLocation,
+                    ats.extractJobTitle(rawJob) || '(untitled)',
+                    ats.extractCompany(rawJob) || '(unknown)',
+                );
+                bump('geoLocked');
+                bump('filtered');
+                continue;
+            }
+
             // 3. Enrichment (Lever / Workday / SmartRecruiters). The first step
             //    that costs a request, hence its position behind the free gates.
             const job = typeof ats.enrichJob === 'function' ? await ats.enrichJob(rawJob) : rawJob;
 
             // Workday's authoritative workplace type only exists post-enrichment.
             if (!isFullyRemote(ats.extractWorkplaceType(job), ats.extractIsRemote(job))) {
+                bump('filtered');
+                continue;
+            }
+
+            // Re-checked on the ENRICHED record: several ATSs leave Location
+            // empty on the list payload and only populate it here, so the raw
+            // check above would have waved those through as "no location".
+            const enrichedLocation = ats.extractLocation(job);
+            if (!isGlobalRemoteLocation(enrichedLocation)) {
+                console.log(
+                    '[RemoteFilter] Rejected geo-locked: "%s" — %s at %s',
+                    enrichedLocation,
+                    ats.extractJobTitle(job) || '(untitled)',
+                    ats.extractCompany(job) || '(unknown)',
+                );
+                bump('geoLocked');
                 bump('filtered');
                 continue;
             }
@@ -393,11 +449,11 @@ async function processAts(db, ats, ctx) {
         .filter(r => r.status === 'changed')
         .reduce((sum, r) => sum + r.jobs.length, 0);
 
-    const progress = { seen: 0, total: totalToProcess, saved: 0, refreshed: 0, filtered: 0, duped: 0 };
+    const progress = { seen: 0, total: totalToProcess, saved: 0, refreshed: 0, filtered: 0, duped: 0, geoLocked: 0 };
     const atsCtx = { ...ctx, seenJobIds, progress };
 
     // ── Process the results sequentially ───────────────────────────────────────
-    const totals = { saved: 0, refreshed: 0, filtered: 0, duped: 0 };
+    const totals = { saved: 0, refreshed: 0, filtered: 0, duped: 0, geoLocked: 0 };
     let unchanged = 0;
     let processed = 0;
     let failed = 0;
@@ -440,6 +496,7 @@ async function processAts(db, ats, ctx) {
         totals.refreshed += counts.refreshed;
         totals.filtered += counts.filtered;
         totals.duped += counts.duped;
+        totals.geoLocked += counts.geoLocked || 0;
         processed++;
 
         statesToSave.push({
@@ -493,6 +550,7 @@ async function processAts(db, ats, ctx) {
         + `${totals.saved} new, ${totals.refreshed} refreshed, ${totals.filtered} filtered, ${totals.duped} duplicates, `
         + `done in ${formatDuration(Date.now() - startedAt)}`,
     );
+    console.log(`[RemoteFilter] Accepted: ${totals.saved + totals.refreshed}, Rejected geo-locked: ${totals.geoLocked}`);
 
     return { ...totals, unchanged, processed, failed };
 }
@@ -588,7 +646,7 @@ async function main() {
     console.log(`[Remote Scraper] Startup complete in ${formatDuration(Date.now() - startupBegan)}`);
 
     // ── Phase 2: per ATS, sequential ───────────────────────────────────────────
-    const totals = { saved: 0, refreshed: 0, filtered: 0, duped: 0, unchanged: 0, processed: 0, failed: 0 };
+    const totals = { saved: 0, refreshed: 0, filtered: 0, duped: 0, geoLocked: 0, unchanged: 0, processed: 0, failed: 0 };
 
     for (const ats of ATS_MODULES) {
         try {
@@ -621,6 +679,7 @@ async function main() {
     console.log(`[Remote Scraper] Complete in ${formatDuration(Date.now() - runStartedAt)}`);
     console.log(`[Remote Scraper] Companies: ${totals.unchanged} unchanged (skipped), ${totals.processed} processed, ${totals.failed} failed`);
     console.log(`[Remote Scraper] Jobs: ${totals.saved} new, ${totals.refreshed} refreshed, ${totals.filtered} filtered, ${totals.duped} duplicates`);
+    console.log(`[RemoteFilter] Rejected geo-locked across all platforms: ${totals.geoLocked}`);
     console.log(`[Remote Scraper] Expired: ${expiredCount}`);
     console.log('─────────────────────────────────────────────');
 }
