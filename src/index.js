@@ -54,7 +54,14 @@ import {
     ComparisonResult,
 } from './remote/scrapeState.js';
 
-import { loadDedupCache, isDuplicate, isExistingJobId, addToCache } from './remote/dedupCache.js';
+import {
+    loadDedupCache,
+    isDuplicate,
+    isExistingJobId,
+    addToCache,
+    saveRejectionsBulk,
+    ensureRejectCacheIndexes,
+} from './remote/dedupCache.js';
 import { createBulkBuffer, addInsert, addUpdate, flushBuffer, flushIfFull } from './remote/bulkSaver.js';
 import {
     loadAllActiveJobIds,
@@ -280,11 +287,33 @@ async function processCompanyJobs(db, ats, result, ctx) {
     const counts = { saved: 0, refreshed: 0, filtered: 0, duped: 0, geoLocked: 0 };
     const progress = ctx.progress;
 
+    // Geo-locked jobs found in this company's board. Written once at the end of
+    // the loop rather than one round-trip per rejection — a single board can
+    // contribute hundreds.
+    const rejections = [];
+
     const bump = (field) => {
         counts[field]++;
         // geoLocked was added later; guard so an older progress object without
         // the key does not turn into NaN in the heartbeat line.
         if (progress && typeof progress[field] === 'number') progress[field]++;
+    };
+
+    /**
+     * Records a geo-locked job so the next run recognises it without having to
+     * re-derive the verdict — and, more importantly, without re-saving it.
+     * The dedupKey is built from the same three fields the dedup check uses, so
+     * the same role arriving through a different ATS is caught too.
+     */
+    const rejectGeoLocked = (job) => {
+        rejections.push({
+            jobId: ats.extractJobID(job),
+            dedupKey: buildDedupKey(
+                ats.extractCompany(job) || '',
+                ats.extractJobTitle(job) || '',
+                ats.extractCountry(job),
+            ),
+        });
     };
 
     for (const rawJob of result.jobs) {
@@ -324,6 +353,7 @@ async function processCompanyJobs(db, ats, result, ctx) {
                     ats.extractJobTitle(rawJob) || '(untitled)',
                     ats.extractCompany(rawJob) || '(unknown)',
                 );
+                rejectGeoLocked(rawJob);
                 bump('geoLocked');
                 bump('filtered');
                 continue;
@@ -350,6 +380,7 @@ async function processCompanyJobs(db, ats, result, ctx) {
                     ats.extractJobTitle(job) || '(untitled)',
                     ats.extractCompany(job) || '(unknown)',
                 );
+                rejectGeoLocked(job);
                 bump('geoLocked');
                 bump('filtered');
                 continue;
@@ -412,6 +443,13 @@ async function processCompanyJobs(db, ats, result, ctx) {
             console.error(`[${ats.ATS_NAME}] ${result.slug}: job failed — ${error.message}`);
             bump('filtered');
         }
+    }
+
+    if (rejections.length > 0) {
+        // The cache is passed in so the in-memory Sets learn about these jobs
+        // immediately, not only on the next run's startup load.
+        await saveRejectionsBulk(db, rejections, ctx.dedupCache);
+        console.log(`[RemoteFilter] Rejected ${rejections.length} geo-locked jobs, saved to reject cache`);
     }
 
     return counts;
@@ -617,6 +655,7 @@ async function main() {
     const db = await connectToDb();
     await ensureScrapeStateIndexes(db);
     await ensureExpiryIndexes(db);
+    await ensureRejectCacheIndexes(db);
 
     const firstRun = await isFirstEverRun(db);
 
