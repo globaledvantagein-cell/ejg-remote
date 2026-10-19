@@ -129,6 +129,20 @@ export const COMPANY_SLUGS = [
     { subdomain: 'adams', tld: 'de' }, { subdomain: 'phrase', tld: 'de' },
     { subdomain: 'functional', tld: 'de' }, { subdomain: 'genuine', tld: 'de' },
     { subdomain: 'inspired', tld: 'de' },
+
+    // --- DISCOVERED 2026-10-19 ---
+    { subdomain: 'runden-group-gmbh-co-kg', tld: 'de' }, { subdomain: 'upstart', tld: 'de' },
+    { subdomain: 'gematik', tld: 'de' }, { subdomain: '360volt-gmbh', tld: 'de' },
+    { subdomain: 'ohpen', tld: 'de' }, { subdomain: 'realeyes', tld: 'de' },
+    { subdomain: 'envelio', tld: 'de' }, { subdomain: 'prewave', tld: 'de' },
+    { subdomain: 'aobis', tld: 'de' }, { subdomain: 'clearwater', tld: 'de' },
+    { subdomain: 'randstad', tld: 'de' }, { subdomain: '21future', tld: 'de' },
+    { subdomain: 'node-energy', tld: 'de' }, { subdomain: 'edb', tld: 'de' },
+    { subdomain: 'einride', tld: 'de' }, { subdomain: 'kiwi', tld: 'de' },
+    { subdomain: 'coderpad', tld: 'de' }, { subdomain: 'ling', tld: 'de' },
+    { subdomain: 'mammut-sports-group', tld: 'de' }, { subdomain: 'intigriti', tld: 'de' },
+    { subdomain: 'giant-swarm', tld: 'de' }, { subdomain: 'rcslt', tld: 'de' },
+    { subdomain: 'atlantis', tld: 'de' },
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

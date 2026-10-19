@@ -62,6 +62,11 @@ export const COMPANY_SLUGS = [
     'loft', 'five', 'sendcloud', 'spectrocloud', 'color', 'rho',
     'dharma', 'sigma', 'anima', 'varnish-software', 'level', 'lead',
     'puzzle', 'dbt', 'lightyear', 'scalr',
+
+    // --- DISCOVERED 2026-10-19 ---
+    'infotreeglobalsolutions', 'letuelezioni', 'crimsoneducation', 'humana', 'mgroup', 'bdo',
+    'talentlify', 'norr', 'starship', 'jungheinrich', 'root', 'higherfrogltd',
+    'swile',
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

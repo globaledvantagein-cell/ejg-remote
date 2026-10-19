@@ -566,6 +566,19 @@ async function main() {
     const names = [...COMPANY_NAMES];
     console.log(`[discover] curated list: ${names.length} companies`);
 
+    // Employer names harvested from live remote job boards (e.g. Remotive's
+    // sitemap via the backend's harvest-company-candidates.js). Optional file.
+    const harvestedFile = path.join(HERE, 'harvested-company-names.json');
+    if (fs.existsSync(harvestedFile)) {
+        try {
+            const harvested = JSON.parse(fs.readFileSync(harvestedFile, 'utf8'));
+            if (Array.isArray(harvested)) names.push(...harvested.map(String));
+            console.log(`[discover] harvested names: ${Array.isArray(harvested) ? harvested.length : 0} companies`);
+        } catch {
+            console.log('[discover] harvested-company-names.json is malformed — skipped');
+        }
+    }
+
     if (options.useYc) {
         names.push(...await fetchYcCompanies());
     } else {

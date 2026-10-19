@@ -89,6 +89,16 @@ export const COMPANY_SLUGS = [
     // --- DISCOVERED 2026-08-04 ---
     'coolblue', 'magellan', 'mirantis', 'seekout', 'servicetitan', 'brighthire',
     'siteminder', 'aitech', 'knockjobs', 'pinwheel',
+
+    // --- DISCOVERED 2026-10-19 ---
+    'egisgroup', 'securitas', 'afry', 'atuauto-teile-unger', 'allianceanimalhealth', 'acddirect',
+    'msxinternational', 'sapitbusinesssysteme', 'saxonglobal', 'version1', 'jsheldllc', 'deutschetelekomitsolutions',
+    'septeo', 'yellltd', 'softwaremind', 'medfar', 'trustonic', 'appen',
+    'netpartnersinternational', 'elitebrain', 'ournationalconversation', 'centraprise', 'fulcrumdigital', 'agriculturalrecruitmentspecialists',
+    'deelpersonaldienstleistungen', 'binance', 'employvision', 'serigorinc', 'cerebraconsultinginc', 'phsgroup',
+    'checkpointsoftwaretechnologies', 'consolidatedcommunications', 'teladochealth', 'visionconsulting', 'airswift', 'aprendeinstitute',
+    'brilliantinfotechinc', 'collinsongroup', 'crewbloom', 'dellainfotechinc', 'insuletcorporation', 'lingaro',
+    'mothersongroup', 'nextrowdigital', 'schwanshomedelivery',
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

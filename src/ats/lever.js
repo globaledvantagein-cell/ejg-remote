@@ -18,6 +18,13 @@ import { runConcurrent, collectFulfilled } from '../utils/concurrent.js';
 export const ATS_NAME = 'lever';
 
 const BASE_URL = 'https://api.lever.co/v0/postings';
+// EU-hosted accounts (jobs.eu.lever.co) 404 on the US API.
+const EU_BASE_URL = 'https://api.eu.lever.co/v0/postings';
+
+/** API base matching a posting's hostedUrl region. */
+function apiBaseFor(hostedUrl) {
+    return String(hostedUrl || '').includes('jobs.eu.lever.co') ? EU_BASE_URL : BASE_URL;
+}
 const REQUEST_DELAY_MS = 300;
 const FETCH_CONCURRENCY = 5;   // companies fetched in parallel per platform
 const REQUEST_TIMEOUT_MS = 20000;
@@ -90,6 +97,11 @@ export const COMPANY_SLUGS = [
     'fresha', 'filevine', 'lodgify', 'metabase', 'restaurant365', 'voltus',
     'truv', 'immuta', 'olo', 'chownow', 'coderpad', 'findem',
     'deepgenomics', 'dwolla', 'benchsci',
+
+    // --- DISCOVERED 2026-10-19 ---
+    'aogarciaagency', 'shieldai', 'insiderone', 'saviynt', 'appen', 'assist-world',
+    'provectus', 'finn', 'decilegroup', 'binance', 'enablecomp', 'nextech',
+    'patch', 'envelio', 'fly', 'coingecko',
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -119,10 +131,16 @@ export async function fetchCompanyJobs(siteName) {
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-        const response = await fetch(`${BASE_URL}/${siteName}?mode=json`, {
+        let response = await fetch(`${BASE_URL}/${siteName}?mode=json`, {
             headers: { 'User-Agent': USER_AGENT },
             signal: controller.signal,
         });
+        if (response.status === 404) {
+            response = await fetch(`${EU_BASE_URL}/${siteName}?mode=json`, {
+                headers: { 'User-Agent': USER_AGENT },
+                signal: controller.signal,
+            });
+        }
 
         if (!response.ok) {
             return [];
@@ -188,7 +206,7 @@ export async function enrichJob(job) {
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-        const response = await fetch(`${BASE_URL}/${companySlug}/${jobId}`, {
+        const response = await fetch(`${apiBaseFor(job.hostedUrl)}/${companySlug}/${jobId}`, {
             headers: { 'User-Agent': USER_AGENT },
             signal: controller.signal,
         });

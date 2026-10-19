@@ -241,6 +241,20 @@ export const COMPANY_SLUGS = [
     'dipper', 'jigsaw', 'walrus', 'alden', 'craze', 'brimstone',
     'lifespan', 'miri', 'genies', 'breadwinner', 'collider', 'vitally',
     'maca', 'brumby',
+
+    // --- DISCOVERED 2026-10-19 ---
+    'clera', 'fluidstack', 'clickhouse', 'true-talent-solutions-partners', 'skelar', 'mercor',
+    'spoton', 'bravehealth', 'parloa', 'hostinger', 'hex', 'metaview',
+    'onhires', 'solvd', 'snyk', 'coder', 'siteminder', 'optro',
+    'latchbio', 'moneybox', 'midnite', 'tentens-tech', 'menlo', 'kissmyapps',
+    'webflow', 'stedi', 'miramace', 'cloudzero', 'leadbank', 'validio',
+    'finout', 'buildops', 'insitro', 'hyphenate', 'bondora', 'chariotclaims',
+    'montecarlodata', 'workhuman', 'hume-ai', 'restream', 'atomic-invest', 'circle',
+    'consensys', 'cradlebio', 'eon', 'atlan', 'kiwi', 'nylas',
+    'capchase', 'owkin', 'progress-partners', 'sylvera', 'betterup', 'cari',
+    'quilter', 'materialsecurity', 'atomic-financial', 'codat', 'sentra', 'dressly',
+    'fastino-ai', 'clerk', 'wistia', 'sifflet', 'davidenergy', 'curated',
+    'nabucasa', 'vound', 'nansen', 'atroposhealth', 'formbio', 'altruistiq',
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

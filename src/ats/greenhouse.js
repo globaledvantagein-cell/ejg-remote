@@ -192,6 +192,22 @@ export const COMPANY_SLUGS = [
     'spotter', 'gearbox', 'revel', 'spitfire', 'kana', 'kayak',
     'incumbent', 'trove', 'tester', 'reliant', 'synaptic', 'resilience',
     'chicory', 'omicron', 'candidly', 'nimbus',
+
+    // --- DISCOVERED 2026-10-19 ---
+    'revolutionmedicines', 'deliveroo', 'natera', 'binance', 'kelsoindustries', 'bybit',
+    'praxisprecisionmedicines', 'payoneer', 'abnormalsecurity', 'garnerhealth', 'blackcanyonconsulting', 'stackadapt',
+    'patriotgrowthinsuranceservicesllc', 'sigmacomputing', 'brilliantearth', 'tysonmendesllp', 'science37', 'zenoti',
+    'clearstreet', 'twinhealth', 'phdata', 'truveta', 'robotsandpencils', 'mewssystems',
+    'acadiapharmaceuticals', 'tines', 'endorlabs', 'cloudbeds', 'isomorphiclabs', 'dwelly',
+    'edb', 'nextiva', 'fieldwire', 'lunarenergy', 'catapultsports', 'wise',
+    'winhomeinspection', 'jungheinrich', 'definiumtherapeutics', 'nadiacare', 'cadencehealth', 'toloka',
+    'hp', 'clearwater', 'mazetherapeutics', 'netcraft', 'generatebiomedicines', 'buildops',
+    'sapienceaicorporation', 'syndio', 'vonage', 'obsidiansecurity', 'newsela', 'insight',
+    'bondora', 'litify', 'nexgencloud', 'appflame', 'ketch', 'veranahealth',
+    'cybersheath', 'dremio', 'ocrolusinc', 'brighthire', 'donorschoose', 'apiiro',
+    'humeai', 'zupinnovation', 'acryldata', 'affirmedrxpbc', 'erasca', 'pipetechnologies',
+    'nuvolar', 'sweetsecurity', 'seekout', 'cellarity', 'alliance', 'peaktechnologies',
+    'streamnative', 'bandzoogle',
 ];
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));

@@ -1,6 +1,6 @@
 // ─── Workable ──────────────────────────────────────────────────────────────────
 //
-// API: GET https://jobs.workable.com/api/v1/jobs?location={country}&limit=100
+// API: GET https://jobs.workable.com/api/v1/jobs?location={country}&limit=20
 //      paginated via nextPageToken.
 //
 // Workable has no per-company board API that still works — the old
@@ -22,8 +22,10 @@ import { runConcurrent, collectFulfilled } from '../utils/concurrent.js';
 export const ATS_NAME = 'workable';
 
 const API_BASE = 'https://jobs.workable.com/api/v1/jobs';
-const PAGE_SIZE = 100;
-const MAX_PAGES_PER_COUNTRY = 8; // 100 × 8 = 800 jobs per country per run
+// The API rejects limit > 20 with {"limit":"Must be less than or equal to 20"}
+// (verified 2026-10-19); at 100 every request failed and this platform saved 0 jobs.
+const PAGE_SIZE = 20;
+const MAX_PAGES_PER_COUNTRY = 40; // 20 × 40 = 800 jobs per country per run
 const PAGE_DELAY_MS = 500;
 const FETCH_CONCURRENCY = 5;   // companies fetched in parallel per platform
 const REQUEST_TIMEOUT_MS = 20000;
@@ -93,7 +95,12 @@ export async function fetchCompanyJobs(location) {
                 clearTimeout(timeoutId);
             }
 
-            const jobs = data.jobs || [];
+            if (!Array.isArray(data.jobs)) {
+                // A validation error still answers 200 — say so instead of reading it as "no jobs".
+                console.log(`[Workable] ${location}: unexpected response ${JSON.stringify(data).slice(0, 120)}`);
+                break;
+            }
+            const jobs = data.jobs;
             if (jobs.length === 0) break;
 
             countryJobs.push(...jobs);
